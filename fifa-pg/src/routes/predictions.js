@@ -4,7 +4,7 @@ const pool    = require('../db/pool');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
-const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+const SIX_HOURS_MS = 1 * 60 * 60 * 1000;
 
 // POST /api/predictions
 router.post('/', requireAuth, async (req, res) => {
@@ -18,7 +18,7 @@ router.post('/', requireAuth, async (req, res) => {
     const match = rows[0];
 
     if (Date.now() >= new Date(match.kickoff_utc).getTime() - SIX_HOURS_MS)
-      return res.status(403).json({ error: 'Prediction window closed — less than 6 hours to kickoff' });
+      return res.status(403).json({ error: 'Prediction window closed — less than 1 hour to kickoff' });
 
     const valid = [match.home_team, match.away_team, 'Draw'];
     if (!valid.includes(predicted_winner))

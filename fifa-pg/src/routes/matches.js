@@ -10,7 +10,7 @@ function computeStatus(match) {
   const now  = Date.now();
   const kick = new Date(match.kickoff_utc).getTime();
   if (now >= kick && now < kick + 110 * 60 * 1000) return 'live';
-  if (now >= kick - 6 * 60 * 60 * 1000)            return 'locked';
+  if (now >= kick - 1 * 60 * 60 * 1000)            return 'locked';
   return 'open';
 }
 

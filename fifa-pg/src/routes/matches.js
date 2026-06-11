@@ -84,7 +84,8 @@ router.put('/:id/result', requireAdmin, async (req, res) => {
     for (const p of preds.rows) {
       const winOk   = p.predicted_winner === actualWinner;
       const scoreOk = p.predicted_home === home_goals && p.predicted_away === away_goals;
-      const pts = winOk ? (scoreOk ? 5 : 1) : 0;
+      // Scoring: correct result (win or draw) = 3 pts; correct result + exact score = 5 pts
+      const pts = winOk ? (scoreOk ? 5 : 3) : 0;
       await pool.query('UPDATE predictions SET points_awarded=$1 WHERE id=$2', [pts, p.id]);
       scored++;
     }

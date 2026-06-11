@@ -66,7 +66,9 @@ router.post('/rescore/:matchId', async (req, res) => {
     for (const p of preds.rows) {
       const winOk   = p.predicted_winner === actualWinner;
       const scoreOk = p.predicted_home === match.home_goals && p.predicted_away === match.away_goals;
-      await pool.query('UPDATE predictions SET points_awarded=$1 WHERE id=$2', [winOk?(scoreOk?5:1):0, p.id]);
+      // Scoring: correct result (win or draw) = 3 pts; correct result + exact score = 5 pts
+      const pts = winOk ? (scoreOk ? 5 : 3) : 0;
+      await pool.query('UPDATE predictions SET points_awarded=$1 WHERE id=$2', [pts, p.id]);
     }
     res.json({ message: `Rescored ${preds.rows.length} predictions for match ${match.id}` });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Server error' }); }

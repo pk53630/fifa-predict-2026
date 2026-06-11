@@ -1,0 +1,28 @@
+# render.yaml
+# Render will read this file and auto-configure your services.
+# Commit this file to your GitHub repo root.
+
+services:
+  - type: web
+    name: fifa-predict-api
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true        # Render generates a random value automatically
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: DATABASE_URL
+        fromDatabase:
+          name: fifa-predict-db
+          property: connectionString
+
+databases:
+  - name: fifa-predict-db
+    plan: free
+    databaseName: fifapredict
+    user: fifapredict

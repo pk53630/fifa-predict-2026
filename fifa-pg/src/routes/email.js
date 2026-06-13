@@ -1,26 +1,23 @@
 // src/routes/email.js
-// Uses AWS SES (Simple Email Service) — most reliable, 3,000 free emails/month.
-// Setup: Create AWS account → verify domain/email in SES → get SMTP credentials.
+// Uses AWS SES API via HTTPS (not SMTP) — works on all hosting including Render free tier.
+// SMTP ports are often blocked on cloud hosts; HTTPS API is never blocked.
+// Uses @aws-sdk/client-ses package.
 
-const express    = require('express');
-const nodemailer = require('nodemailer');
-const pool       = require('../db/pool');
+const express = require('express');
+const pool    = require('../db/pool');
 const { requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 router.use(requireAdmin);
 
-// ── AWS SES SMTP transporter ──────────────────────────────────────────────────
-// SES provides SMTP credentials — different from your AWS access keys.
-// Get these from: AWS Console → SES → SMTP Settings → Create SMTP credentials
-function getTransporter() {
-  return nodemailer.createTransport({
-    host:   process.env.SES_SMTP_HOST || 'email-smtp.ap-south-1.amazonaws.com',
-    port:   465,
-    secure: true,
-    auth: {
-      user: process.env.SES_SMTP_USER,   // SMTP username from AWS SES console
-      pass: process.env.SES_SMTP_PASS,   // SMTP password from AWS SES console
+// ── Build SES client using AWS SDK v3 ────────────────────────────────────────
+function getSESClient() {
+  const { SESClient } = require('@aws-sdk/client-ses');
+  return new SESClient({
+    region: process.env.AWS_REGION || 'ap-south-1',
+    credentials: {
+      accessKeyId:     process.env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
     },
   });
 }
@@ -43,51 +40,52 @@ router.get('/recent-users', async (req, res) => {
   }
 });
 
-// ── GET /api/email/all-users ──────────────────────────────────────────────────
-router.get('/all-users', async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT id, name, email, created_at FROM users WHERE role = 'user' ORDER BY created_at DESC`
-    );
-    res.json({ users: rows, count: rows.length });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
 // ── POST /api/email/test ──────────────────────────────────────────────────────
-// Send a test email to the admin to verify SES is working
 router.post('/test', async (req, res) => {
   try {
-    if (!process.env.SES_SMTP_USER || !process.env.SES_SMTP_PASS) {
+    if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
       return res.status(500).json({
-        error: 'SES_SMTP_USER and SES_SMTP_PASS not configured in environment variables'
+        error: 'AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY not set in Render environment variables'
       });
     }
-    const { rows } = await pool.query('SELECT email, name FROM users WHERE id = $1', [req.user.id]);
+    if (!process.env.SES_FROM_EMAIL) {
+      return res.status(500).json({
+        error: 'SES_FROM_EMAIL not set — add your verified email address'
+      });
+    }
+
+    const { rows } = await pool.query(
+      'SELECT email, name FROM users WHERE id = $1', [req.user.id]
+    );
     if (!rows.length) return res.status(404).json({ error: 'User not found' });
 
-    const transporter = getTransporter();
-    await transporter.verify();   // test the connection first
+    const { SESClient, SendEmailCommand } = require('@aws-sdk/client-ses');
+    const client = getSESClient();
 
-    await transporter.sendMail({
-      from:    `"FIFA Predict 2026" <${process.env.SES_FROM_EMAIL}>`,
-      to:      rows[0].email,
-      subject: '✅ FIFA Predict 2026 — Email test successful!',
-      html:    buildEmailHtml(rows[0].name, 'This is a test email from your FIFA Predict 2026 admin panel.\n\nAWS SES is configured correctly and emails are working! 🎉\n\nYou can now send emails to all your users.'),
-    });
+    await client.send(new SendEmailCommand({
+      Source: `FIFA Predict 2026 <${process.env.SES_FROM_EMAIL}>`,
+      Destination: { ToAddresses: [rows[0].email] },
+      Message: {
+        Subject: { Data: '✅ FIFA Predict 2026 — Email test successful!' },
+        Body: {
+          Html: { Data: buildEmailHtml(rows[0].name,
+            'This is a test email from your FIFA Predict 2026 admin panel.\n\nAWS SES is configured correctly and emails are working! 🎉\n\nYou can now send emails to all your users.'
+          )},
+        },
+      },
+    }));
 
-    res.json({ message: `Test email sent to ${rows[0].email}` });
+    res.json({ message: `✅ Test email sent to ${rows[0].email}` });
   } catch (err) {
     console.error('SES test error:', err);
-    res.status(500).json({
-      error: err.message,
-      hint: err.message.includes('535') ? 'Invalid SMTP credentials — check SES_SMTP_USER and SES_SMTP_PASS'
-          : err.message.includes('454') ? 'Account still in sandbox — verify recipient email in SES console or request production access'
-          : err.message.includes('ECONNREFUSED') ? 'Cannot connect to SES — check SES_SMTP_HOST region'
-          : 'Check AWS SES console for more details'
-    });
+    const hint =
+      err.name === 'InvalidClientTokenId'  ? 'AWS_ACCESS_KEY_ID is invalid — check it in Render env vars' :
+      err.name === 'SignatureDoesNotMatch'  ? 'AWS_SECRET_ACCESS_KEY is wrong — regenerate in AWS IAM console' :
+      err.name === 'MessageRejected'        ? 'Email rejected — your SES account may be in sandbox mode (verify recipient email first)' :
+      err.name === 'MailFromDomainNotVerified' ? 'SES_FROM_EMAIL not verified in AWS SES console' :
+      err.Code === 'InvalidClientTokenId'   ? 'AWS credentials are invalid' :
+      'Check AWS SES console and Render environment variables';
+    res.status(500).json({ error: err.message, hint });
   }
 });
 
@@ -99,37 +97,40 @@ router.post('/send-bulk', async (req, res) => {
     if (!subject || !message)
       return res.status(400).json({ error: 'subject and message are required' });
 
-    if (!process.env.SES_SMTP_USER || !process.env.SES_SMTP_PASS)
+    if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY)
       return res.status(500).json({
-        error: 'SES_SMTP_USER and SES_SMTP_PASS not configured in Render environment variables'
+        error: 'AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY not configured in Render environment variables'
       });
 
     if (!process.env.SES_FROM_EMAIL)
       return res.status(500).json({
-        error: 'SES_FROM_EMAIL not configured — set it to your verified email/domain in SES'
+        error: 'SES_FROM_EMAIL not configured — add your verified SES email'
       });
 
     const hoursInt = parseInt(hours);
     const queryStr = send_to_all
-      ? `SELECT id, name, email FROM users WHERE role = 'user' ORDER BY created_at DESC`
-      : `SELECT id, name, email FROM users WHERE role = 'user' AND created_at >= NOW() - INTERVAL '${hoursInt} hours' ORDER BY created_at DESC`;
+      ? `SELECT id, name, email FROM users WHERE role='user' ORDER BY created_at DESC`
+      : `SELECT id, name, email FROM users WHERE role='user' AND created_at >= NOW() - INTERVAL '${hoursInt} hours' ORDER BY created_at DESC`;
 
     const { rows: users } = await pool.query(queryStr);
 
     if (!users.length)
       return res.json({ message: 'No users found', sent: 0, failed: 0, total: 0 });
 
-    const transporter = getTransporter();
+    const { SESClient, SendEmailCommand } = require('@aws-sdk/client-ses');
+    const client = getSESClient();
     let sent = 0, failed = 0, failedEmails = [];
 
     for (const user of users) {
       try {
-        await transporter.sendMail({
-          from:    `"FIFA Predict 2026" <${process.env.SES_FROM_EMAIL}>`,
-          to:      user.email,
-          subject: subject,
-          html:    buildEmailHtml(user.name, message),
-        });
+        await client.send(new SendEmailCommand({
+          Source: `FIFA Predict 2026 <${process.env.SES_FROM_EMAIL}>`,
+          Destination: { ToAddresses: [user.email] },
+          Message: {
+            Subject: { Data: subject },
+            Body: { Html: { Data: buildEmailHtml(user.name, message) } },
+          },
+        }));
         sent++;
         console.log(`✅ Sent to ${user.email}`);
       } catch (err) {
@@ -137,7 +138,7 @@ router.post('/send-bulk', async (req, res) => {
         failed++;
         failedEmails.push(user.email);
       }
-      // Small delay to respect SES rate limit (14 emails/sec on free tier)
+      // Respect SES rate limit (14/sec free tier)
       await new Promise(r => setTimeout(r, 200));
     }
 
@@ -171,7 +172,7 @@ function buildEmailHtml(name, message) {
     <div style="font-size:15px;color:#c8cdd6;line-height:1.7;margin-bottom:24px;">${htmlMsg}</div>
     <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
       <tr><td style="background:#1a2235;border-radius:10px;padding:20px;border:1px solid rgba(245,200,66,.2);">
-        <p style="margin:0 0 12px;font-size:13px;font-weight:700;color:#f5c842;text-transform:uppercase;letter-spacing:.05em;">How to earn points</p>
+        <p style="margin:0 0 12px;font-size:13px;font-weight:700;color:#f5c842;text-transform:uppercase;">How to earn points</p>
         <table width="100%">
           <tr><td style="padding:6px 0;font-size:13px;color:#8a94a6;">⏰ Predict <strong style="color:#f97316;">1 hour</strong> before kickoff</td></tr>
           <tr><td style="padding:6px 0;font-size:13px;color:#8a94a6;">⚽ Correct winner or draw = <strong style="color:#60a5fa;">3 pts</strong></td></tr>

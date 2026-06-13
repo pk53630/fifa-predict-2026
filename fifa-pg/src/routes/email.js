@@ -190,7 +190,7 @@ function buildEmailHtml(name, message) {
       </td></tr>
     </table>
     <div style="text-align:center;margin-bottom:28px;">
-      <a href="https://fifa-predict-2026.netlify.app"
+      <a href="https://rainbow-souffle-ab1a97.netlify.app"
          style="display:inline-block;background:#f5c842;color:#0a0f1e;text-decoration:none;padding:14px 36px;border-radius:8px;font-size:15px;font-weight:700;">
         ⚽ Make Your Predictions Now
       </a>
@@ -198,7 +198,7 @@ function buildEmailHtml(name, message) {
     <hr style="border:none;border-top:1px solid rgba(255,255,255,.08);margin:0 0 20px;"/>
     <p style="margin:0;font-size:12px;color:#4a5568;text-align:center;line-height:1.6;">
       You received this because you registered on FIFA Predict 2026.<br/>
-      <a href="https://fifa-predict-2026.netlify.app" style="color:#f5c842;text-decoration:none;">fifa-predict-2026.netlify.app</a>
+      <a href="https://rainbow-souffle-ab1a97.netlify.app" style="color:#f5c842;text-decoration:none;">rainbow-souffle-ab1a97.netlify.app</a>
     </p>
   </td></tr>
 </table>
